@@ -6,3 +6,6 @@
 /.vscode
 /get-poetry.py
 /Pipfile.lock
+/build
+/dist
+/pymydao.egg-info
