@@ -1,0 +1,8 @@
+/imgs/*.jpg
+/.idea
+*.pyc
+/demo.mp4
+/Pipfile.lock
+/.vscode
+/get-poetry.py
+/Pipfile.lock
