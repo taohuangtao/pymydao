@@ -1,5 +1,7 @@
 from pymysql.connections import Connection
+from pymysql.connections import Cursor
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -15,25 +17,48 @@ class Db(object):
 
         self._connect = None
 
-        self._auto_commit = True
-
     def begin(self):
-        self._auto_commit = False
+        self.get_connect().begin()
         pass
 
     def commit(self):
         self.get_connect().commit()
-        self._auto_commit = True
         pass
 
     def rollback(self):
         self.get_connect().rollback()
-        self._auto_commit = True
         pass
 
     class _Connect(Connection):
+        def __init__(self, host, user, password, db, port, use_unicode, charset):
+            super().__init__(host=host, user=user, password=password,
+                  database=db, port=port,
+                  use_unicode=use_unicode, charset=charset)
+            # 事务，同一个连接，多次开启事务，实际只有第一个有效
+            self._transaction = []
+
+        def begin(self):
+            if len(self._transaction) == 0:
+                super().begin()
+            self._transaction.append(1)
+
+        def commit(self):
+            if len(self._transaction) == 1:
+                super().commit()
+            self._transaction.pop()
+
+        def rollback(self):
+            if len(self._transaction) == 1:
+                super().rollback()
+            self._transaction.pop()
+
         def close(self):
-            super().close()
+            """
+            有事务未处理，不能关闭连接
+            :return:
+            """
+            if len(self._transaction) == 0:
+                super().close()
 
     def get_connect(self):
         if self._connect is None:
@@ -59,8 +84,7 @@ class Db(object):
             db = self.get_connect()
             cursor = db.cursor()
             data = cursor.execute(sql, args)
-            if self._auto_commit:
-                db.commit()
+            db.commit()
             return data
         except BaseException as e:
             logger.debug("sql %s" % sql)
@@ -78,8 +102,7 @@ class Db(object):
             db = self.get_connect()
             cursor = db.cursor()
             data = cursor.executemany(sql, args)
-            if self._auto_commit:
-                db.commit()
+            db.commit()
             return data
         except BaseException as e:
             # logger.exception(e)
@@ -137,8 +160,11 @@ class Model(object):
     def close(self):
         """
         手动关闭数据库连接
+        过时的，未来版本会删除
         :return:
         """
+        warnings.warn("The 'close' method is deprecated, "
+                      "use 'warning' instead", DeprecationWarning, 2)
         self._db.close()
 
     def _insert(self, data):
@@ -197,8 +223,10 @@ class Model(object):
             result = self._insert(data)
         else:
             pass
-        # 插入内容，保存自增主键
+        # 插入内容，保存自增主键，每次插入都获取自增ID，因为要多一次查询(实际上不一定每次都需要自增ID)在高并发情况下会降低并发度
+        # 但每次操作完成需要关闭连接，后期考虑如何优化
         self._get_insert_id()
+        self._db.close()
         return result
 
     def _get_insert_id(self):
@@ -219,10 +247,14 @@ class Model(object):
         return last_insert_id
 
     def select(self, sql, args=None):
-        return self._db.select(sql, args)
+        result = self._db.select(sql, args)
+        self._db.close()
+        return result
 
     def execute(self, sql, args=None):
-        return self._db.execute(sql, args)
+        result = self._db.execute(sql, args)
+        self._db.close()
+        return result
 
     def update(self, data, where):
         """
@@ -241,5 +273,7 @@ class Model(object):
             whes.append("`%s` = %%s" % k)
             argv.append(v)
         sql = "UPDATE  " + self._table + " SET " + " , ".join(sets) + " WHERE " + " AND ".join(whes)
-        logger.info("update sql : %s" % sql)
-        return self.execute(sql, argv)
+        logger.debug("update sql : %s" % sql)
+        result = self.execute(sql, argv)
+        self._db.close()
+        return result

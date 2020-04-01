@@ -13,7 +13,7 @@ class DbHelper(object):
         self.password = password
         self.dbname = dbname
         self.port = port
-
+        # 按线程ID保存连接，每个线程只用当前线程的连接。gevent 的协程也可正常工作
         self._db = {}
 
     def get_model_instance(self, table=None):
