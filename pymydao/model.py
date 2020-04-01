@@ -129,6 +129,7 @@ class Model(object):
     def __init__(self, db, table=None):
         self._db = db
         self._table = table
+        self._last_insert_id = 0
 
     def __str__(self):
         return self._table
@@ -189,22 +190,33 @@ class Model(object):
         :param data: dict or list(dict)
         :return: int
         """
+        result = None
         if isinstance(data, list):
-            return self._insert_batch(data)
+            result = self._insert_batch(data)
         elif isinstance(data, dict):
-            return self._insert(data)
+            result = self._insert(data)
         else:
             pass
-        pass
+        # 插入内容，保存自增主键
+        self._get_insert_id()
+        return result
+
+    def _get_insert_id(self):
+        """
+        将自增ID保存到当前对象中
+        :return:
+        """
+        info = self._db.select("SELECT LAST_INSERT_ID()")
+        self._last_insert_id = info[0]["LAST_INSERT_ID()"]
 
     def get_insert_id(self):
         """
         单条插入可通过此方法获取自增主键
         :return: id
         """
-
-        info = self.select("SELECT LAST_INSERT_ID()")
-        return info[0]["LAST_INSERT_ID()"]
+        last_insert_id = self._last_insert_id
+        self._last_insert_id = 0
+        return last_insert_id
 
     def select(self, sql, args=None):
         return self._db.select(sql, args)

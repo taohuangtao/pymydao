@@ -1,6 +1,7 @@
 from .model import Model, Db
 from functools import wraps
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +14,22 @@ class DbHelper(object):
         self.dbname = dbname
         self.port = port
 
-        self._db = None
+        self._db = {}
 
     def get_model_instance(self, table=None):
         return Model(self.get_db(), table)
 
     def get_db(self):
-        if self._db is None:
-            self._db = Db(host=self.host, username=self.username, password=self.password, dbname=self.dbname,
-                          port=self.port)
-        return self._db
+        # 在多线程或协程时
+        thread_id = threading.get_ident()
+        try:
+            if self._db[thread_id] is None:
+                raise KeyError()
+        except KeyError as e:
+            self._db[thread_id] = Db(host=self.host, username=self.username, password=self.password,
+                                     dbname=self.dbname,
+                                     port=self.port)
+        return self._db[thread_id]
 
     def begin(self):
         self.get_db().begin()

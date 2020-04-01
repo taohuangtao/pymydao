@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(name='pymydao',
-      version='0.0.2',
+      version='0.0.3',
       description='mysql dao',
       url='https://github.com/taohuangtao/pymydao',
       author='huangtao',
