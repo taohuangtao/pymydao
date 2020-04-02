@@ -2,6 +2,7 @@ from .model import Model, Db
 from functools import wraps
 import logging
 import threading
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,14 @@ class DbHelper(object):
         return Model(self.get_db(), table)
 
     def get_db(self):
+        """
+        过时的，未来版本中将会删除
+        :return:
+        """
+        warnings.warn("The 'get_db' method is deprecated", DeprecationWarning, 2)
+        return self.__get_db()
+
+    def __get_db(self):
         # 在多线程或协程时
         thread_id = threading.get_ident()
         try:
@@ -34,13 +43,13 @@ class DbHelper(object):
         return self.__db[thread_id]
 
     def begin(self):
-        self.get_db().begin()
+        self.__get_db().begin()
 
     def commit(self):
-        self.get_db().commit()
+        self.__get_db().commit()
 
     def rollback(self):
-        self.get_db().rollback()
+        self.__get_db().rollback()
 
     def transactional(self, func):
         """
@@ -52,16 +61,16 @@ class DbHelper(object):
         def transaction_processing(*args, **kwargs):
             self.__transaction.append(1)
             logger.debug(func.__name__ + " was called")
-            self.get_db().begin()
+            self.__get_db().begin()
             ex = None
             try:
                 result = func(*args, **kwargs)
-                self.get_db().commit()
+                self.__get_db().commit()
                 return result
             except BaseException as e:
                 ex = e
                 logger.exception("错误进行回滚", e)
-                self.get_db().rollback()
+                self.__get_db().rollback()
             self.__transaction.pop()
             if ex is not None and len(self.__transaction) != 0:
                 # 如果上层还有事务注解，再次将事务上抛
