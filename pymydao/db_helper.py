@@ -14,7 +14,9 @@ class DbHelper(object):
         self.dbname = dbname
         self.port = port
         # 按线程ID保存连接，每个线程只用当前线程的连接。gevent 的协程也可正常工作
-        self._db = {}
+        self.__db = {}
+        # 记录事务栈，处理事务重入，重入事务在同一个事务内
+        self.__transaction = []
 
     def get_model_instance(self, table=None):
         return Model(self.get_db(), table)
@@ -23,13 +25,13 @@ class DbHelper(object):
         # 在多线程或协程时
         thread_id = threading.get_ident()
         try:
-            if self._db[thread_id] is None:
+            if self.__db[thread_id] is None:
                 raise KeyError()
         except KeyError as e:
-            self._db[thread_id] = Db(host=self.host, username=self.username, password=self.password,
-                                     dbname=self.dbname,
-                                     port=self.port)
-        return self._db[thread_id]
+            self.__db[thread_id] = Db(host=self.host, username=self.username, password=self.password,
+                                      dbname=self.dbname,
+                                      port=self.port)
+        return self.__db[thread_id]
 
     def begin(self):
         self.get_db().begin()
@@ -48,15 +50,22 @@ class DbHelper(object):
 
         @wraps(func)
         def transaction_processing(*args, **kwargs):
-            print(func.__name__ + " was called")
+            self.__transaction.append(1)
+            logger.debug(func.__name__ + " was called")
             self.get_db().begin()
+            ex = None
             try:
                 result = func(*args, **kwargs)
                 self.get_db().commit()
                 return result
             except BaseException as e:
+                ex = e
                 logger.exception("错误进行回滚", e)
                 self.get_db().rollback()
+            self.__transaction.pop()
+            if ex is not None and len(self.__transaction) != 0:
+                # 如果上层还有事务注解，再次将事务上抛
+                raise ex
 
         return transaction_processing
         pass

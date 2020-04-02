@@ -1,13 +1,16 @@
-from pymysql.connections import Connection
-from pymysql.connections import Cursor
 import logging
 import warnings
+
+from pymysql.connections import Connection
 
 logger = logging.getLogger(__name__)
 
 
 class Db(object):
-
+    """
+    事务重入将在一个事务内
+    代理连接，在开启事务后，所有操作都在一个连接内，只有事务回滚或者提交才可关闭连接
+    """
     def __init__(self, host, username, password, dbname, port=3306):
         self.host = host
         self.username = username
@@ -16,54 +19,32 @@ class Db(object):
         self.port = port
 
         self._connect = None
+        # 事务，同一个连接，多次开启事务，实际只有第一个有效
+        self.__transaction = []
 
     def begin(self):
-        self.get_connect().begin()
-        pass
+        if len(self.__transaction) == 0:
+            self.__get_connect().begin()
+        self.__transaction.append(1)
 
     def commit(self):
-        self.get_connect().commit()
-        pass
+        if len(self.__transaction) == 1:
+            self.__get_connect().commit()
+        self.__transaction.pop()
 
     def rollback(self):
-        self.get_connect().rollback()
-        pass
+        if len(self.__transaction) == 1:
+            self.__get_connect().rollback()
+        self.__transaction.pop()
 
-    class _Connect(Connection):
-        def __init__(self, host, user, password, db, port, use_unicode, charset):
-            super().__init__(host=host, user=user, password=password,
-                  database=db, port=port,
-                  use_unicode=use_unicode, charset=charset)
-            # 事务，同一个连接，多次开启事务，实际只有第一个有效
-            self._transaction = []
-
-        def begin(self):
-            if len(self._transaction) == 0:
-                super().begin()
-            self._transaction.append(1)
-
-        def commit(self):
-            if len(self._transaction) == 1:
-                super().commit()
-            self._transaction.pop()
-
-        def rollback(self):
-            if len(self._transaction) == 1:
-                super().rollback()
-            self._transaction.pop()
-
+    class __Connect(Connection):
         def close(self):
-            """
-            有事务未处理，不能关闭连接
-            :return:
-            """
-            if len(self._transaction) == 0:
-                super().close()
+            super().close()
 
-    def get_connect(self):
+    def __get_connect(self):
         if self._connect is None:
-            self._connect = self._Connect(host=self.host, user=self.username, password=self.password, db=self.dbname,
-                                          port=self.port, use_unicode=True, charset="utf8")
+            self._connect = self.__Connect(host=self.host, user=self.username, password=self.password, db=self.dbname,
+                                           port=self.port, use_unicode=True, charset="utf8")
         return self._connect
 
     def close(self):
@@ -71,6 +52,9 @@ class Db(object):
         关闭连接
         :return:
         """
+        if len(self.__transaction) != 0:
+            # 有事务，不关闭连接
+            return
         if self._connect is not None:
             self._connect.close()
             self._connect = None
@@ -81,7 +65,7 @@ class Db(object):
 
         cursor = None
         try:
-            db = self.get_connect()
+            db = self.__get_connect()
             cursor = db.cursor()
             data = cursor.execute(sql, args)
             db.commit()
@@ -99,7 +83,7 @@ class Db(object):
         logger.debug(args)
         cursor = None
         try:
-            db = self.get_connect()
+            db = self.__get_connect()
             cursor = db.cursor()
             data = cursor.executemany(sql, args)
             db.commit()
@@ -118,7 +102,7 @@ class Db(object):
         logger.debug(args)
         cursor = None
         try:
-            db = self.get_connect()
+            db = self.__get_connect()
             cursor = db.cursor()
             cursor.execute(sql, args)
 
@@ -150,12 +134,12 @@ class Db(object):
 class Model(object):
 
     def __init__(self, db, table=None):
-        self._db = db
-        self._table = table
-        self._last_insert_id = 0
+        self.__db = db
+        self.__table = table
+        self.__last_insert_id = 0
 
     def __str__(self):
-        return self._table
+        return self.__table
 
     def close(self):
         """
@@ -164,10 +148,10 @@ class Model(object):
         :return:
         """
         warnings.warn("The 'close' method is deprecated, "
-                      "use 'warning' instead", DeprecationWarning, 2)
-        self._db.close()
+                      "The connection is closed automatically", DeprecationWarning, 2)
+        self.__db.close()
 
-    def _insert(self, data):
+    def __insert(self, data):
         """
         单条插入
         :param data:
@@ -181,11 +165,11 @@ class Model(object):
             cols.append("`" + k + "`")
             ds.append("%s")
             dat_list.append(v)
-        insert_sql = "INSERT INTO `%s`(%s) VALUES(%s)" % (self._table, ",".join(cols), ",".join(ds))
+        insert_sql = "INSERT INTO `%s`(%s) VALUES(%s)" % (self.__table, ",".join(cols), ",".join(ds))
 
-        return self._db.execute(insert_sql, dat_list)
+        return self.__db.execute(insert_sql, dat_list)
 
-    def _insert_batch(self, data_list):
+    def __insert_batch(self, data_list):
         """
         批量插入
         :param data_list:
@@ -200,7 +184,7 @@ class Model(object):
             cols_sql.append("`" + k + "`")
             cols.append(k)
             ds.append("%s")
-        insert_sql = "INSERT INTO `%s`(%s) VALUES(%s)" % (self._table, ",".join(cols_sql), ",".join(ds))
+        insert_sql = "INSERT INTO `%s`(%s) VALUES(%s)" % (self.__table, ",".join(cols_sql), ",".join(ds))
         # 执行插入
         tuple_list = []
         for row in data_list:
@@ -208,7 +192,7 @@ class Model(object):
             for c in cols:
                 d.append(row[c])
             tuple_list.append(d)
-        return self._db.executemany(insert_sql, tuple_list)
+        return self.__db.executemany(insert_sql, tuple_list)
 
     def insert(self, data):
         """
@@ -218,42 +202,42 @@ class Model(object):
         """
         result = None
         if isinstance(data, list):
-            result = self._insert_batch(data)
+            result = self.__insert_batch(data)
         elif isinstance(data, dict):
-            result = self._insert(data)
+            result = self.__insert(data)
         else:
             pass
         # 插入内容，保存自增主键，每次插入都获取自增ID，因为要多一次查询(实际上不一定每次都需要自增ID)在高并发情况下会降低并发度
         # 但每次操作完成需要关闭连接，后期考虑如何优化
-        self._get_insert_id()
-        self._db.close()
+        self.__get_insert_id()
+        self.__db.close()
         return result
 
-    def _get_insert_id(self):
+    def __get_insert_id(self):
         """
         将自增ID保存到当前对象中
         :return:
         """
-        info = self._db.select("SELECT LAST_INSERT_ID()")
-        self._last_insert_id = info[0]["LAST_INSERT_ID()"]
+        info = self.__db.select("SELECT LAST_INSERT_ID()")
+        self.__last_insert_id = info[0]["LAST_INSERT_ID()"]
 
     def get_insert_id(self):
         """
         单条插入可通过此方法获取自增主键
         :return: id
         """
-        last_insert_id = self._last_insert_id
-        self._last_insert_id = 0
+        last_insert_id = self.__last_insert_id
+        self.__last_insert_id = 0
         return last_insert_id
 
     def select(self, sql, args=None):
-        result = self._db.select(sql, args)
-        self._db.close()
+        result = self.__db.select(sql, args)
+        self.__db.close()
         return result
 
     def execute(self, sql, args=None):
-        result = self._db.execute(sql, args)
-        self._db.close()
+        result = self.__db.execute(sql, args)
+        self.__db.close()
         return result
 
     def update(self, data, where):
@@ -272,8 +256,8 @@ class Model(object):
         for (k, v) in where.items():
             whes.append("`%s` = %%s" % k)
             argv.append(v)
-        sql = "UPDATE  " + self._table + " SET " + " , ".join(sets) + " WHERE " + " AND ".join(whes)
+        sql = "UPDATE  " + self.__table + " SET " + " , ".join(sets) + " WHERE " + " AND ".join(whes)
         logger.debug("update sql : %s" % sql)
         result = self.execute(sql, argv)
-        self._db.close()
+        self.__db.close()
         return result
