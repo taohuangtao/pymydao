@@ -128,6 +128,7 @@ class Db(object):
                 cursor.close()
 
     def get_model_instance(self, table=None):
+        warnings.warn("The 'get_model_instance' method is deprecated", DeprecationWarning, 2)
         return Model(self, table)
 
 
@@ -258,6 +259,6 @@ class Model(object):
             argv.append(v)
         sql = "UPDATE  " + self.__table + " SET " + " , ".join(sets) + " WHERE " + " AND ".join(whes)
         logger.debug("update sql : %s" % sql)
-        result = self.execute(sql, argv)
+        result = self.__db.execute(sql, argv)
         self.__db.close()
         return result

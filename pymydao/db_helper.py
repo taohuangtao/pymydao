@@ -20,7 +20,7 @@ class DbHelper(object):
         self.__transaction = []
 
     def get_model_instance(self, table=None):
-        return Model(self.get_db(), table)
+        return Model(self.__get_db(), table)
 
     def get_db(self):
         """
@@ -29,6 +29,15 @@ class DbHelper(object):
         """
         warnings.warn("The 'get_db' method is deprecated", DeprecationWarning, 2)
         return self.__get_db()
+
+    class __Db(Db):
+        def set_db_helper(self, db_helper):
+            self.__db_helper = db_helper
+
+        def close(self):
+            super().close()
+            thread_id = threading.get_ident()
+            self.__db_helper.__db[thread_id] = None
 
     def __get_db(self):
         # 在多线程或协程时
@@ -72,6 +81,8 @@ class DbHelper(object):
                 logger.exception("错误进行回滚", e)
                 self.__get_db().rollback()
             self.__transaction.pop()
+            if len(self.__transaction) == 0:
+                self.__get_db().close()
             if ex is not None and len(self.__transaction) != 0:
                 # 如果上层还有事务注解，再次将事务上抛
                 raise ex
