@@ -32,12 +32,13 @@ class DbHelper(object):
 
     class __Db(Db):
         def set_db_helper(self, db_helper):
-            self.__db_helper = db_helper
+            pass
+            # self.__db_helper = db_helper
 
         def close(self):
             super().close()
-            thread_id = threading.get_ident()
-            self.__db_helper.__db[thread_id] = None
+            # thread_id = threading.get_ident()
+            # self.__db_helper.__db[thread_id] = None
 
     def __get_db(self):
         # 在多线程或协程时
