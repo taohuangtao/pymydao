@@ -15,7 +15,7 @@ class DbHelper(object):
         self.dbname = dbname
         self.port = port
         # 按线程ID保存连接，每个线程只用当前线程的连接。gevent 的协程也可正常工作
-        self.__db = {}
+        self.__local = threading.local()
         # 记录事务栈，处理事务重入，重入事务在同一个事务内
         self.__transaction = []
 
@@ -42,15 +42,14 @@ class DbHelper(object):
 
     def __get_db(self):
         # 在多线程或协程时
-        thread_id = threading.get_ident()
         try:
-            if self.__db[thread_id] is None:
-                raise KeyError()
-        except KeyError as e:
-            self.__db[thread_id] = Db(host=self.host, username=self.username, password=self.password,
+            if self.__local.db is None:
+                raise AttributeError()
+        except AttributeError as e:
+            self.__local.db = Db(host=self.host, username=self.username, password=self.password,
                                       dbname=self.dbname,
                                       port=self.port)
-        return self.__db[thread_id]
+        return self.__local.db
 
     def begin(self):
         self.__get_db().begin()
