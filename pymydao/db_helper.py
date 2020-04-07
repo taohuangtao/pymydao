@@ -42,14 +42,17 @@ class DbHelper(object):
 
     def __get_db(self):
         # 在多线程或协程时
-        try:
-            if self.__local.db is None:
-                raise AttributeError()
-        except AttributeError as e:
-            self.__local.db = Db(host=self.host, username=self.username, password=self.password,
-                                      dbname=self.dbname,
-                                      port=self.port)
-        return self.__local.db
+        # try:
+        #     if self.__local.db is None:
+        #         raise AttributeError()
+        # except AttributeError as e:
+        #     self.__local.db = Db(host=self.host, username=self.username, password=self.password,
+        #                               dbname=self.dbname,
+        #                               port=self.port)
+        db = Db(host=self.host, username=self.username, password=self.password,
+                             dbname=self.dbname,
+                             port=self.port)
+        return db
 
     def begin(self):
         self.__get_db().begin()
