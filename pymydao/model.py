@@ -3,6 +3,13 @@ import warnings
 
 from pymysql.connections import Connection
 
+try:
+    from greenlet import getcurrent as get_ident
+except ImportError:
+    try:
+        from thread import get_ident
+    except ImportError:
+        from _thread import get_ident
 logger = logging.getLogger(__name__)
 
 
@@ -11,6 +18,7 @@ class Db(object):
     事务重入将在一个事务内
     代理连接，在开启事务后，所有操作都在一个连接内，只有事务回滚或者提交才可关闭连接
     """
+
     def __init__(self, host, username, password, dbname, port=3306):
         self.host = host
         self.username = username
@@ -18,46 +26,75 @@ class Db(object):
         self.dbname = dbname
         self.port = port
 
-        self._connect = None
-        # 事务，同一个连接，多次开启事务，实际只有第一个有效
-        self.__transaction = []
+        # 本地对象，当前线程或协程对象，每个线程或协程是独立的连接，互不干扰
+        self.__local = {}
 
     def begin(self):
-        if len(self.__transaction) == 0:
+        if len(self.__get_local()['transaction']) == 0:
             self.__get_connect().begin()
-        self.__transaction.append(1)
+        self.__get_local()['transaction'].append(1)
 
     def commit(self):
-        if len(self.__transaction) == 1:
+        if len(self.__get_local()['transaction']) == 1:
             self.__get_connect().commit()
-        self.__transaction.pop()
+        self.__get_local()['transaction'].pop()
 
     def rollback(self):
-        if len(self.__transaction) == 1:
+        if len(self.__get_local()['transaction']) == 1:
             self.__get_connect().rollback()
-        self.__transaction.pop()
+        self.__get_local()['transaction'].pop()
 
-    class __Connect(Connection):
-        def close(self):
-            super().close()
+    def __get_local(self):
+        """
+        获取本地对象，每个线程或协程对象独立
+        :return:
+        """
+        thread_id = get_ident()
+        try:
+            self.__local[thread_id]
+        except KeyError as e:
+            self.__local[thread_id] = {
+                'transaction': [],
+                'connect': None
+            }
+        return self.__local[thread_id]
 
-    def __get_connect(self):
-        if self._connect is None:
-            self._connect = self.__Connect(host=self.host, user=self.username, password=self.password, db=self.dbname,
-                                           port=self.port, use_unicode=True, charset="utf8")
-        return self._connect
+    def __del_local(self):
+        """
+        删除本地对象
+        :return:
+        """
+        thread_id = get_ident()
+        try:
+            del self.__local[thread_id]
+        except KeyError as e:
+            pass
 
     def close(self):
         """
         关闭连接
         :return:
         """
-        if len(self.__transaction) != 0:
+        if len(self.__get_local()['transaction']) != 0:
             # 有事务，不关闭连接
             return
-        if self._connect is not None:
-            self._connect.close()
-            self._connect = None
+        if self.__get_local()['connect'] is not None:
+            self.__get_local()['connect'].close()
+            self.__get_local()['connect'] = None
+        # 删除本地对象，避免内存溢出
+        self.__del_local()
+
+    class __Connect(Connection):
+        def close(self):
+            super().close()
+
+    def __get_connect(self):
+        if self.__get_local()['connect'] is None:
+            self.__get_local()['connect'] = self.__Connect(host=self.host, user=self.username, password=self.password,
+                                                           db=self.dbname,
+                                                           port=self.port, use_unicode=True, charset="utf8",
+                                                           autocommit=True)
+        return self.__get_local()['connect']
 
     def execute(self, sql, args=None):
         logger.debug(sql)
@@ -68,7 +105,6 @@ class Db(object):
             db = self.__get_connect()
             cursor = db.cursor()
             data = cursor.execute(sql, args)
-            db.commit()
             return data
         except BaseException as e:
             logger.debug("sql %s" % sql)
@@ -86,7 +122,6 @@ class Db(object):
             db = self.__get_connect()
             cursor = db.cursor()
             data = cursor.executemany(sql, args)
-            db.commit()
             return data
         except BaseException as e:
             # logger.exception(e)

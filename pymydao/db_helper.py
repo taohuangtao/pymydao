@@ -14,10 +14,8 @@ class DbHelper(object):
         self.password = password
         self.dbname = dbname
         self.port = port
-        # 按线程ID保存连接，每个线程只用当前线程的连接。gevent 的协程也可正常工作
-        self.__local = threading.local()
-        # 记录事务栈，处理事务重入，重入事务在同一个事务内
-        self.__transaction = []
+
+        self.__db = None
 
     def get_model_instance(self, table=None):
         return Model(self.__get_db(), table)
@@ -41,18 +39,11 @@ class DbHelper(object):
             # self.__db_helper.__db[thread_id] = None
 
     def __get_db(self):
-        # 在多线程或协程时
-        # try:
-        #     if self.__local.db is None:
-        #         raise AttributeError()
-        # except AttributeError as e:
-        #     self.__local.db = Db(host=self.host, username=self.username, password=self.password,
-        #                               dbname=self.dbname,
-        #                               port=self.port)
-        db = Db(host=self.host, username=self.username, password=self.password,
+        if self.__db is None:
+            self.__db = self.__Db(host=self.host, username=self.username, password=self.password,
                              dbname=self.dbname,
                              port=self.port)
-        return db
+        return self.__db
 
     def begin(self):
         self.__get_db().begin()
@@ -71,24 +62,15 @@ class DbHelper(object):
 
         @wraps(func)
         def transaction_processing(*args, **kwargs):
-            self.__transaction.append(1)
             logger.debug(func.__name__ + " was called")
-            self.__get_db().begin()
-            ex = None
+            self.begin()
             try:
                 result = func(*args, **kwargs)
-                self.__get_db().commit()
+                self.commit()
                 return result
             except BaseException as e:
-                ex = e
                 logger.exception("错误进行回滚", e)
-                self.__get_db().rollback()
-            self.__transaction.pop()
-            if len(self.__transaction) == 0:
-                self.__get_db().close()
-            if ex is not None and len(self.__transaction) != 0:
-                # 如果上层还有事务注解，再次将事务上抛
-                raise ex
+                self.rollback()
+                raise e
 
         return transaction_processing
-        pass
